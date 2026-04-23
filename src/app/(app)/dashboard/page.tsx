@@ -1,8 +1,25 @@
 import type { Metadata } from "next";
+import { prisma } from "@/lib/prisma";
+import { LeadStatus } from "@prisma/client";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const [totalLeads, activePlaybooks, searchProfiles, outreachReady] =
+    await Promise.all([
+      prisma.lead.count(),
+      prisma.playbook.count({ where: { isActive: true } }),
+      prisma.searchProfile.count({ where: { isActive: true } }),
+      prisma.lead.count({ where: { status: LeadStatus.OUTREACH_READY } }),
+    ]);
+
+  const stats = [
+    { label: "Total Leads", value: totalLeads },
+    { label: "Active Playbooks", value: activePlaybooks },
+    { label: "Search Profiles", value: searchProfiles },
+    { label: "Outreach Ready", value: outreachReady },
+  ];
+
   return (
     <div className="page-container">
       <div className="page-header">
@@ -11,12 +28,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-        {[
-          { label: "Total Leads", value: "—" },
-          { label: "Active Playbooks", value: "—" },
-          { label: "Search Profiles", value: "—" },
-          { label: "Outreach Ready", value: "—" },
-        ].map(({ label, value }) => (
+        {stats.map(({ label, value }) => (
           <div
             key={label}
             className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm"

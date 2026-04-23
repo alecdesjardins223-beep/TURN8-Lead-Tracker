@@ -15,6 +15,17 @@ async function main() {
     },
   });
 
+  // Keep the real operator account at ADMIN so re-seeding doesn't downgrade it
+  await prisma.user.upsert({
+    where: { email: "alec.desjardins@turn8wealth.com" },
+    update: { role: UserRole.ADMIN },
+    create: {
+      name: "Alec Desjardins",
+      email: "alec.desjardins@turn8wealth.com",
+      role: UserRole.ADMIN,
+    },
+  });
+
   const playbook = await prisma.playbook.upsert({
     where: { id: "seed-playbook-founders" },
     update: {},

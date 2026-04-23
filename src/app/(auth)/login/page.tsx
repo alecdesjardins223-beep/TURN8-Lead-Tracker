@@ -1,8 +1,12 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 
 export const metadata: Metadata = { title: "Sign In | TURN8 Lead Tracker" };
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  const cookieStore = await cookies();
+  // NextAuth stores the CSRF token as "token|hash" in this cookie
+  const csrfToken = cookieStore.get("next-auth.csrf-token")?.value?.split("|")[0] ?? "";
   return (
     <div className="flex min-h-screen items-center justify-center bg-surface-muted">
       <div className="w-full max-w-sm">
@@ -28,11 +32,7 @@ export default function LoginPage() {
             method="POST"
             className="space-y-4"
           >
-            <input
-              name="csrfToken"
-              type="hidden"
-              // CSRF token populated by NextAuth at runtime
-            />
+            <input name="csrfToken" type="hidden" value={csrfToken} />
             <div>
               <label
                 htmlFor="email"
