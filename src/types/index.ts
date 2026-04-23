@@ -2,16 +2,19 @@ import type {
   Lead,
   Playbook,
   SearchProfile,
+  WorkflowRun,
   User,
   LeadActivity,
   LeadArchetype,
   LeadStatus,
   UserRole,
   ActivityType,
+  WorkflowRunStatus,
 } from "@prisma/client";
 
-// Re-export Prisma enums for use throughout the app
-export { LeadArchetype, LeadStatus, UserRole, ActivityType };
+// Re-export Prisma enums and models for use throughout the app
+export { LeadArchetype, LeadStatus, UserRole, ActivityType, WorkflowRunStatus };
+export type { WorkflowRun };
 
 // Enriched types used in UI layers
 export type LeadWithRelations = Lead & {

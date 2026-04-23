@@ -148,7 +148,38 @@ model SearchProfile {
   playbookId String?
   playbook   Playbook? @relation(fields: [playbookId], references: [id])
 
-  leads Lead[]
+  leads        Lead[]
+  workflowRuns WorkflowRun[]
+}
+
+// ---------------------------------------------------------------------------
+// Discovery Workflow Runs
+// Append-only log of every discovery run against a search profile
+// ---------------------------------------------------------------------------
+
+enum WorkflowRunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model WorkflowRun {
+  id              String            @id @default(cuid())
+  type            String            // e.g. "DISCOVERY"
+  status          WorkflowRunStatus
+  searchProfileId String
+  searchProfile   SearchProfile     @relation(fields: [searchProfileId], references: [id])
+  inputPayload    Json              @default("{}")
+  rawOutput       Json?
+  parsedOutput    Json?
+  errorMessage    String?           @db.Text
+  candidatesFound Int               @default(0)
+  leadsCreated    Int               @default(0)
+  leadsSkipped    Int               @default(0)
+  createdAt       DateTime          @default(now())
+  completedAt     DateTime?
+
+  @@index([searchProfileId])
 }
 
 // ---------------------------------------------------------------------------
