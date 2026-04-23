@@ -26,19 +26,23 @@ export async function runDiscovery(profileId: string): Promise<DiscoveryActionRe
   const profile = await prisma.searchProfile.findUnique({ where: { id: profileId } });
   if (!profile) return { ok: false, error: "Search profile not found" };
 
-  // Create the run record immediately so the UI can show "running"
+  // Resolve provider before creating the run so we can record its name
+  const provider = getDiscoveryProvider();
+
   const run = await prisma.workflowRun.create({
     data: {
-      type:           "DISCOVERY",
-      status:         "RUNNING",
+      type:            "DISCOVERY",
+      status:          "RUNNING",
       searchProfileId: profileId,
-      inputPayload:   { filters: profile.filters, archetype: profile.archetype },
+      inputPayload:    {
+        filters:   profile.filters,
+        archetype: profile.archetype,
+        provider:  provider.name,
+      },
     },
   });
 
   try {
-    // Run discovery
-    const provider = getDiscoveryProvider();
     const result = await provider.discover({
       name:      profile.name,
       archetype: profile.archetype,

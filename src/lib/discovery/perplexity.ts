@@ -1,5 +1,5 @@
-import { CandidateArraySchema } from "./types";
-import type { DiscoveryProvider, DiscoveryResult, SearchProfileInput } from "./types";
+import { LeadCandidateSchema } from "./types";
+import type { DiscoveryProvider, DiscoveryResult, LeadCandidate, SearchProfileInput } from "./types";
 
 const PERPLEXITY_API_URL = "https://api.perplexity.ai/chat/completions";
 const MODEL = "sonar-pro";
@@ -84,8 +84,42 @@ export class PerplexityDiscoveryProvider implements DiscoveryProvider {
     const raw = await res.json();
     const content: string = raw?.choices?.[0]?.message?.content ?? "";
 
-    const parsed = CandidateArraySchema.parse(JSON.parse(extractJson(content)));
+    // Parse JSON, tolerating code fences and wrapper objects
+    let rawArray: unknown[];
+    try {
+      const parsed = JSON.parse(extractJson(content));
+      if (Array.isArray(parsed)) {
+        rawArray = parsed;
+      } else if (parsed && typeof parsed === "object") {
+        // Handle {"candidates": [...]} or {"results": [...]} wrappers
+        const nested =
+          (parsed as Record<string, unknown>).candidates ??
+          (parsed as Record<string, unknown>).results ??
+          (parsed as Record<string, unknown>).leads;
+        rawArray = Array.isArray(nested) ? nested : [];
+      } else {
+        rawArray = [];
+      }
+    } catch (e) {
+      throw new Error(
+        `Could not parse Perplexity response as JSON: ${e instanceof Error ? e.message : "parse error"}. ` +
+          `Raw content (first 300 chars): ${content.slice(0, 300)}`
+      );
+    }
 
-    return { candidates: parsed, rawOutput: raw };
+    // Validate each candidate individually — skip malformed ones rather than failing the run
+    const candidates: LeadCandidate[] = rawArray.flatMap((item) => {
+      const result = LeadCandidateSchema.safeParse(item);
+      return result.success ? [result.data] : [];
+    });
+
+    if (candidates.length === 0) {
+      throw new Error(
+        `Perplexity returned ${rawArray.length} item(s) but none passed validation. ` +
+          `Check rawOutput in the WorkflowRun for details.`
+      );
+    }
+
+    return { candidates, rawOutput: raw };
   }
 }

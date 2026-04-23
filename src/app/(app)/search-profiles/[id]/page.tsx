@@ -60,6 +60,7 @@ export default async function SearchProfileDetailPage({
           id: true, status: true, candidatesFound: true,
           leadsCreated: true, leadsSkipped: true,
           errorMessage: true, createdAt: true, completedAt: true,
+          inputPayload: true,
         },
       },
       _count: { select: { leads: true } },
@@ -180,28 +181,37 @@ export default async function SearchProfileDetailPage({
             <div className="rounded-lg border border-slate-200 bg-white p-6">
               <h2 className="text-sm font-semibold text-slate-900 mb-4">Discovery Runs</h2>
               <ul className="divide-y divide-slate-100">
-                {profile.workflowRuns.map((run) => (
-                  <li key={run.id} className="flex items-start justify-between py-3 gap-4">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${RUN_STATUS_CLASSES[run.status]}`}>
-                          {run.status}
-                        </span>
-                        {run.status === "COMPLETED" && (
-                          <span className="text-xs text-slate-500">
-                            {run.candidatesFound} found · {run.leadsCreated} created · {run.leadsSkipped} skipped
+                {profile.workflowRuns.map((run) => {
+                  const providerName =
+                    (run.inputPayload as Record<string, unknown> | null)?.provider as string | undefined;
+                  return (
+                    <li key={run.id} className="flex items-start justify-between py-3 gap-4">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${RUN_STATUS_CLASSES[run.status]}`}>
+                            {run.status}
                           </span>
-                        )}
-                        {run.status === "FAILED" && run.errorMessage && (
-                          <span className="text-xs text-red-600 truncate max-w-sm">{run.errorMessage}</span>
-                        )}
+                          {providerName && (
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-500">
+                              {providerName}
+                            </span>
+                          )}
+                          {run.status === "COMPLETED" && (
+                            <span className="text-xs text-slate-500">
+                              {run.candidatesFound} found · {run.leadsCreated} created · {run.leadsSkipped} skipped
+                            </span>
+                          )}
+                          {run.status === "FAILED" && run.errorMessage && (
+                            <span className="text-xs text-red-600 truncate max-w-sm">{run.errorMessage}</span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <p className="text-xs text-slate-400 shrink-0">
-                      {run.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                    </p>
-                  </li>
-                ))}
+                      <p className="text-xs text-slate-400 shrink-0">
+                        {run.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      </p>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           )}
