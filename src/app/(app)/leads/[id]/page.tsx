@@ -131,6 +131,7 @@ export default async function LeadDetailPage({
             <h2 className="text-sm font-semibold text-slate-900 mb-4">Update Status</h2>
             <form action={action} className="flex items-center gap-3">
               <select
+                key={lead.status}
                 name="status"
                 defaultValue={lead.status}
                 className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"

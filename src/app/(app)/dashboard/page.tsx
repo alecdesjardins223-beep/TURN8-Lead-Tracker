@@ -5,23 +5,23 @@ import { LeadStatus } from "@prisma/client";
 export const metadata: Metadata = { title: "Dashboard" };
 
 export default async function DashboardPage() {
-  const [totalLeads, qualifiedLeads, highPriorityLeads, draftsReady] =
+  const [totalLeads, qualifiedLeads, draftsReady, contacted, engaged, converted] =
     await Promise.all([
       prisma.lead.count(),
-      // RESEARCHED = first status past auto-discovery; closest proxy for "qualified"
       prisma.lead.count({ where: { status: LeadStatus.RESEARCHED } }),
-      // No priority field in schema; CONTACTED+ENGAGED are the actively-pursued leads
-      prisma.lead.count({
-        where: { status: { in: [LeadStatus.CONTACTED, LeadStatus.ENGAGED] } },
-      }),
       prisma.lead.count({ where: { status: LeadStatus.OUTREACH_READY } }),
+      prisma.lead.count({ where: { status: LeadStatus.CONTACTED } }),
+      prisma.lead.count({ where: { status: LeadStatus.ENGAGED } }),
+      prisma.lead.count({ where: { status: LeadStatus.CONVERTED } }),
     ]);
 
   const stats = [
     { label: "Total Discovered", value: totalLeads },
-    { label: "Qualified", value: qualifiedLeads },
-    { label: "High Priority", value: highPriorityLeads },
-    { label: "Drafts Ready", value: draftsReady },
+    { label: "Qualified",        value: qualifiedLeads },
+    { label: "Drafts Ready",     value: draftsReady },
+    { label: "Contacted",        value: contacted },
+    { label: "Engaged",          value: engaged },
+    { label: "Converted",        value: converted },
   ];
 
   return (
@@ -31,7 +31,7 @@ export default async function DashboardPage() {
         <p className="page-subtitle">Overview of pipeline activity and lead status</p>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {stats.map(({ label, value }) => (
           <div
             key={label}
