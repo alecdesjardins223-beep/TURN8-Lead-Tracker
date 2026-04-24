@@ -74,9 +74,9 @@ export default async function LeadsPage() {
               {leads.map((lead) => (
                 <tr key={lead.id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-4 py-3">
-                    <p className="text-sm font-medium text-slate-900">
+                    <Link href={`/leads/${lead.id}`} className="text-sm font-medium text-slate-900 hover:text-brand-600">
                       {lead.firstName} {lead.lastName}
-                    </p>
+                    </Link>
                     {(lead.title || lead.company) && (
                       <p className="mt-0.5 text-xs text-slate-400">
                         {[lead.title, lead.company].filter(Boolean).join(" · ")}

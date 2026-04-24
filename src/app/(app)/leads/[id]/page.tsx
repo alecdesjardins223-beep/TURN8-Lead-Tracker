@@ -1,0 +1,224 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { prisma } from "@/lib/prisma";
+import { LeadStatus } from "@prisma/client";
+import { formatArchetype, formatStatus } from "@/lib/utils";
+import { updateLeadStatus } from "./actions";
+
+export const metadata: Metadata = { title: "Lead" };
+
+const STATUS_CLASSES: Record<LeadStatus, string> = {
+  IDENTIFIED:     "bg-slate-100 text-slate-600",
+  RESEARCHED:     "bg-blue-50 text-blue-700",
+  OUTREACH_READY: "bg-indigo-50 text-indigo-700",
+  CONTACTED:      "bg-amber-50 text-amber-700",
+  ENGAGED:        "bg-green-50 text-green-700",
+  CONVERTED:      "bg-emerald-50 text-emerald-700",
+  ARCHIVED:       "bg-slate-100 text-slate-400",
+};
+
+const ALL_STATUSES = Object.values(LeadStatus);
+
+export default async function LeadDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+
+  const lead = await prisma.lead.findUnique({
+    where: { id },
+    include: {
+      assignedTo:    { select: { name: true, email: true } },
+      playbook:      { select: { name: true } },
+      searchProfile: { select: { id: true, name: true } },
+    },
+  });
+
+  if (!lead) notFound();
+
+  const action = updateLeadStatus.bind(null, lead.id);
+
+  return (
+    <div className="page-container">
+      <div className="page-header">
+        <nav className="flex items-center gap-1.5 text-sm text-slate-500 mb-2">
+          <Link href="/leads" className="hover:text-slate-900">
+            Leads
+          </Link>
+          <span>/</span>
+          <span className="truncate max-w-xs text-slate-700">
+            {lead.firstName} {lead.lastName}
+          </span>
+        </nav>
+
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="page-title">
+                {lead.firstName} {lead.lastName}
+              </h1>
+              <span className="rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-medium text-brand-700">
+                {formatArchetype(lead.archetype)}
+              </span>
+              <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_CLASSES[lead.status]}`}>
+                {formatStatus(lead.status)}
+              </span>
+            </div>
+            {(lead.title || lead.company) && (
+              <p className="page-subtitle">
+                {[lead.title, lead.company].filter(Boolean).join(" · ")}
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* Left: details */}
+        <div className="lg:col-span-2 space-y-6">
+          <div className="rounded-lg border border-slate-200 bg-white p-6">
+            <h2 className="text-sm font-semibold text-slate-900 mb-4">Contact Info</h2>
+            <dl className="space-y-3 text-sm">
+              {lead.email && (
+                <div className="flex gap-4">
+                  <dt className="w-28 shrink-0 text-slate-500">Email</dt>
+                  <dd className="text-slate-900">{lead.email}</dd>
+                </div>
+              )}
+              {lead.phone && (
+                <div className="flex gap-4">
+                  <dt className="w-28 shrink-0 text-slate-500">Phone</dt>
+                  <dd className="text-slate-900">{lead.phone}</dd>
+                </div>
+              )}
+              {lead.linkedinUrl && (
+                <div className="flex gap-4">
+                  <dt className="w-28 shrink-0 text-slate-500">LinkedIn</dt>
+                  <dd>
+                    <a
+                      href={lead.linkedinUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-brand-600 hover:text-brand-700 truncate block max-w-sm"
+                    >
+                      {lead.linkedinUrl}
+                    </a>
+                  </dd>
+                </div>
+              )}
+              {lead.location && (
+                <div className="flex gap-4">
+                  <dt className="w-28 shrink-0 text-slate-500">Location</dt>
+                  <dd className="text-slate-900">{lead.location}</dd>
+                </div>
+              )}
+              {lead.notes && (
+                <div className="flex gap-4">
+                  <dt className="w-28 shrink-0 text-slate-500">Notes</dt>
+                  <dd className="text-slate-700 whitespace-pre-wrap">{lead.notes}</dd>
+                </div>
+              )}
+              {!lead.email && !lead.phone && !lead.linkedinUrl && !lead.location && !lead.notes && (
+                <p className="text-slate-400">No contact details available.</p>
+              )}
+            </dl>
+          </div>
+
+          {/* Status update */}
+          <div className="rounded-lg border border-slate-200 bg-white p-6">
+            <h2 className="text-sm font-semibold text-slate-900 mb-4">Update Status</h2>
+            <form action={action} className="flex items-center gap-3">
+              <select
+                name="status"
+                defaultValue={lead.status}
+                className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              >
+                {ALL_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {formatStatus(s)}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="submit"
+                className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
+              >
+                Save
+              </button>
+            </form>
+          </div>
+        </div>
+
+        {/* Right: metadata */}
+        <div>
+          <div className="rounded-lg border border-slate-200 bg-white p-6">
+            <h2 className="text-sm font-semibold text-slate-900 mb-4">Details</h2>
+            <dl className="space-y-3 text-sm">
+              <div>
+                <dt className="text-slate-500">Archetype</dt>
+                <dd className="mt-0.5 font-medium text-slate-900">{formatArchetype(lead.archetype)}</dd>
+              </div>
+              <div>
+                <dt className="text-slate-500">Status</dt>
+                <dd className="mt-0.5">
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_CLASSES[lead.status]}`}>
+                    {formatStatus(lead.status)}
+                  </span>
+                </dd>
+              </div>
+              {lead.playbook && (
+                <div>
+                  <dt className="text-slate-500">Playbook</dt>
+                  <dd className="mt-0.5 font-medium text-slate-900">{lead.playbook.name}</dd>
+                </div>
+              )}
+              {lead.searchProfile && (
+                <div>
+                  <dt className="text-slate-500">Source Profile</dt>
+                  <dd className="mt-0.5">
+                    <Link
+                      href={`/search-profiles/${lead.searchProfile.id}`}
+                      className="font-medium text-brand-600 hover:text-brand-700"
+                    >
+                      {lead.searchProfile.name}
+                    </Link>
+                  </dd>
+                </div>
+              )}
+              {lead.assignedTo && (
+                <div>
+                  <dt className="text-slate-500">Assigned to</dt>
+                  <dd className="mt-0.5 font-medium text-slate-900">
+                    {lead.assignedTo.name ?? lead.assignedTo.email}
+                  </dd>
+                </div>
+              )}
+              <div>
+                <dt className="text-slate-500">Created</dt>
+                <dd className="mt-0.5 font-medium text-slate-900">
+                  {lead.createdAt.toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-slate-500">Last updated</dt>
+                <dd className="mt-0.5 font-medium text-slate-900">
+                  {lead.updatedAt.toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
