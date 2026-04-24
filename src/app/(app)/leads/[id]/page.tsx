@@ -4,7 +4,8 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { LeadStatus } from "@prisma/client";
 import { formatArchetype, formatStatus } from "@/lib/utils";
-import { updateLeadStatus } from "./actions";
+import { updateLeadStatus, createNote, deleteNote, researchLead } from "./actions";
+import type { ResearchBrief } from "@/lib/research";
 
 export const metadata: Metadata = { title: "Lead" };
 
@@ -33,12 +34,22 @@ export default async function LeadDetailPage({
       assignedTo:    { select: { name: true, email: true } },
       playbook:      { select: { name: true } },
       searchProfile: { select: { id: true, name: true } },
+      activities: {
+        where:   { type: "NOTE" },
+        orderBy: { createdAt: "desc" },
+        select:  { id: true, body: true, createdAt: true },
+      },
     },
   });
 
   if (!lead) notFound();
 
-  const action = updateLeadStatus.bind(null, lead.id);
+  const action          = updateLeadStatus.bind(null, lead.id);
+  const noteAction      = createNote.bind(null, lead.id);
+  const researchAction  = researchLead.bind(null, lead.id);
+
+  const meta     = lead.metadata as Record<string, unknown>;
+  const research = (meta?.research ?? null) as (ResearchBrief & { generatedAt: string; provider: string }) | null;
 
   return (
     <div className="page-container">
@@ -149,6 +160,122 @@ export default async function LeadDetailPage({
                 Save
               </button>
             </form>
+          </div>
+          {/* Research Brief */}
+          <div className="rounded-lg border border-slate-200 bg-white p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-slate-900">Research Brief</h2>
+              <form action={researchAction}>
+                <button
+                  type="submit"
+                  className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
+                >
+                  {research ? "Re-run research" : "Research this lead"}
+                </button>
+              </form>
+            </div>
+
+            {research ? (
+              <dl className="space-y-4 text-sm">
+                <div>
+                  <dt className="font-medium text-slate-700">Summary</dt>
+                  <dd className="mt-1 text-slate-600">{research.summary}</dd>
+                </div>
+                <div>
+                  <dt className="font-medium text-slate-700">Why relevant</dt>
+                  <dd className="mt-1 text-slate-600">{research.relevance}</dd>
+                </div>
+                <div>
+                  <dt className="font-medium text-slate-700">Public signals</dt>
+                  <dd className="mt-1 text-slate-600">{research.signals}</dd>
+                </div>
+                <div>
+                  <dt className="font-medium text-slate-700">Suggested outreach angle</dt>
+                  <dd className="mt-1 text-slate-600">{research.outreachAngle}</dd>
+                </div>
+                {research.sources.length > 0 && (
+                  <div>
+                    <dt className="font-medium text-slate-700">Sources</dt>
+                    <dd className="mt-1 space-y-1">
+                      {research.sources.map((src, i) => (
+                        <a
+                          key={i}
+                          href={src}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block truncate text-xs text-brand-600 hover:text-brand-700"
+                        >
+                          {src}
+                        </a>
+                      ))}
+                    </dd>
+                  </div>
+                )}
+                <p className="text-xs text-slate-400">
+                  Generated {new Date(research.generatedAt).toLocaleDateString("en-US", {
+                    month: "short", day: "numeric", year: "numeric",
+                    hour: "2-digit", minute: "2-digit",
+                  })} via {research.provider}
+                </p>
+              </dl>
+            ) : (
+              <p className="text-sm text-slate-400">
+                No research brief yet — click "Research this lead" to generate one.
+              </p>
+            )}
+          </div>
+
+          {/* Notes */}
+          <div className="rounded-lg border border-slate-200 bg-white p-6">
+            <h2 className="text-sm font-semibold text-slate-900 mb-4">Notes</h2>
+
+            <form action={noteAction} className="mb-6">
+              <textarea
+                name="body"
+                rows={3}
+                placeholder="Add an internal note…"
+                className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              />
+              <div className="mt-2 flex justify-end">
+                <button
+                  type="submit"
+                  className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
+                >
+                  Save note
+                </button>
+              </div>
+            </form>
+
+            {lead.activities.length === 0 ? (
+              <p className="text-sm text-slate-400">No notes yet.</p>
+            ) : (
+              <ul className="space-y-4">
+                {lead.activities.map((note) => (
+                  <li key={note.id} className="border-t border-slate-100 pt-4 first:border-t-0 first:pt-0">
+                    <p className="text-sm text-slate-700 whitespace-pre-wrap">{note.body}</p>
+                    <div className="mt-1 flex items-center justify-between gap-4">
+                      <p className="text-xs text-slate-400">
+                        {note.createdAt.toLocaleDateString("en-US", {
+                          month:  "short",
+                          day:    "numeric",
+                          year:   "numeric",
+                          hour:   "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </p>
+                      <form action={deleteNote.bind(null, lead.id, note.id)}>
+                        <button
+                          type="submit"
+                          className="text-xs text-slate-400 hover:text-red-600"
+                        >
+                          Delete
+                        </button>
+                      </form>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
 
