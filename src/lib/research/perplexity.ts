@@ -11,9 +11,16 @@ function buildPrompt(lead: ResearchLeadInput): string {
   if (lead.linkedinUrl) lines.push(`LinkedIn: ${lead.linkedinUrl}`);
   lines.push(`Lead type: ${lead.archetype.replace(/_/g, " ")}`);
 
+  const playbookSection = lead.playbook
+    ? `\n\nPlaybook: ${lead.playbook.name}
+Target persona: ${lead.playbook.persona}
+Signal focus: ${lead.playbook.signalFocus}
+Research guidance: ${lead.playbook.researchGuidance}`
+    : "";
+
   return `Research the following individual as a potential wealth-management prospect for an institutional allocator:
 
-${lines.join("\n")}
+${lines.join("\n")}${playbookSection}
 
 Return ONLY a valid JSON object — no markdown, no prose, no code fences:
 {

@@ -4,8 +4,20 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { LeadStatus } from "@prisma/client";
 import { formatArchetype, formatStatus } from "@/lib/utils";
-import { updateLeadStatus, createNote, deleteNote, researchLead } from "./actions";
-import type { ResearchBrief } from "@/lib/research";
+import {
+  updateLeadStatus,
+  createNote,
+  deleteNote,
+  researchLead,
+  generateDraft,
+  updateContactInfo,
+  updateLeadPlaybook,
+} from "./actions";
+import type { StoredBrief } from "@/lib/research";
+import type { EmailDraft } from "@/lib/draft";
+import type { LeadScore, PriorityLabel } from "@/lib/scoring";
+import { getPlaybookConfig } from "@/lib/playbooks";
+import { SubmitButton } from "./SubmitButton";
 
 export const metadata: Metadata = { title: "Lead" };
 
@@ -21,6 +33,26 @@ const STATUS_CLASSES: Record<LeadStatus, string> = {
 
 const ALL_STATUSES = Object.values(LeadStatus);
 
+const INPUT_CLS =
+  "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500";
+
+const ACTION_BTN_CLS =
+  "rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40";
+
+const SCORE_LABEL_CLASSES: Record<PriorityLabel, string> = {
+  "High Priority": "bg-green-100 text-green-800",
+  "Review":        "bg-amber-50 text-amber-700",
+  "Monitor":       "bg-slate-100 text-slate-600",
+  "Low Fit":       "bg-slate-50 text-slate-400",
+};
+
+const SCORE_FACTORS: Array<{ key: keyof LeadScore["factors"]; label: string }> = [
+  { key: "triggerStrength",  label: "Trigger"    },
+  { key: "personaFit",       label: "Persona"    },
+  { key: "complexityNeed",   label: "Complexity" },
+  { key: "evidenceQuality",  label: "Evidence"   },
+];
+
 export default async function LeadDetailPage({
   params,
 }: {
@@ -28,28 +60,46 @@ export default async function LeadDetailPage({
 }) {
   const { id } = await params;
 
-  const lead = await prisma.lead.findUnique({
-    where: { id },
-    include: {
-      assignedTo:    { select: { name: true, email: true } },
-      playbook:      { select: { name: true } },
-      searchProfile: { select: { id: true, name: true } },
-      activities: {
-        where:   { type: "NOTE" },
-        orderBy: { createdAt: "desc" },
-        select:  { id: true, body: true, createdAt: true },
+  const [lead, playbooks] = await Promise.all([
+    prisma.lead.findUnique({
+      where: { id },
+      include: {
+        assignedTo:    { select: { name: true, email: true } },
+        playbook:      { select: { id: true, name: true } },
+        searchProfile: { select: { id: true, name: true } },
+        activities: {
+          where:   { type: "NOTE" },
+          orderBy: { createdAt: "desc" },
+          select:  { id: true, body: true, createdAt: true },
+        },
       },
-    },
-  });
+    }),
+    prisma.playbook.findMany({
+      where:   { isActive: true },
+      select:  { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+  ]);
 
   if (!lead) notFound();
 
-  const action          = updateLeadStatus.bind(null, lead.id);
-  const noteAction      = createNote.bind(null, lead.id);
-  const researchAction  = researchLead.bind(null, lead.id);
+  const action               = updateLeadStatus.bind(null, lead.id);
+  const noteAction           = createNote.bind(null, lead.id);
+  const researchAction       = researchLead.bind(null, lead.id);
+  const draftAction          = generateDraft.bind(null, lead.id);
+  const updateContactAction  = updateContactInfo.bind(null, lead.id);
+  const updatePlaybookAction = updateLeadPlaybook.bind(null, lead.id);
 
-  const meta     = lead.metadata as Record<string, unknown>;
-  const research = (meta?.research ?? null) as (ResearchBrief & { generatedAt: string; provider: string }) | null;
+  const playbookConfig  = lead.playbook?.id ? getPlaybookConfig(lead.playbook.id) : null;
+  const meta            = lead.metadata as Record<string, unknown>;
+  const research        = (meta?.research        ?? null) as StoredBrief | null;
+  const researchHistory = ((meta?.researchHistory ?? []) as StoredBrief[]);
+  const draft           = (meta?.draft           ?? null) as (EmailDraft & { generatedAt: string; provider: string }) | null;
+  const score           = (meta?.score           ?? null) as LeadScore | null;
+
+  const researchPlaybookName = research?.playbookId
+    ? (playbooks.find((p) => p.id === research.playbookId)?.name ?? null)
+    : null;
 
   return (
     <div className="page-container">
@@ -89,13 +139,17 @@ export default async function LeadDetailPage({
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Left: details */}
         <div className="lg:col-span-2 space-y-6">
+
+          {/* Contact Info */}
           <div className="rounded-lg border border-slate-200 bg-white p-6">
             <h2 className="text-sm font-semibold text-slate-900 mb-4">Contact Info</h2>
-            <dl className="space-y-3 text-sm">
+
+            {/* Read-only display */}
+            <dl className="space-y-3 text-sm mb-6">
               {lead.email && (
                 <div className="flex gap-4">
                   <dt className="w-28 shrink-0 text-slate-500">Email</dt>
-                  <dd className="text-slate-900">{lead.email}</dd>
+                  <dd className="text-slate-900 break-all">{lead.email}</dd>
                 </div>
               )}
               {lead.phone && (
@@ -132,9 +186,64 @@ export default async function LeadDetailPage({
                 </div>
               )}
               {!lead.email && !lead.phone && !lead.linkedinUrl && !lead.location && !lead.notes && (
-                <p className="text-slate-400">No contact details available.</p>
+                <p className="text-slate-400">No contact details — add them below.</p>
               )}
             </dl>
+
+            {/* Inline edit form for contact fields */}
+            <div className="border-t border-slate-100 pt-4">
+              <p className="text-xs font-medium text-slate-500 mb-3">Edit contact details</p>
+              <form action={updateContactAction} className="space-y-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="ci-email" className="block text-xs text-slate-500 mb-1">
+                      Email
+                    </label>
+                    <input
+                      id="ci-email"
+                      name="email"
+                      type="email"
+                      defaultValue={lead.email ?? ""}
+                      placeholder="name@example.com"
+                      className={INPUT_CLS}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="ci-phone" className="block text-xs text-slate-500 mb-1">
+                      Phone
+                    </label>
+                    <input
+                      id="ci-phone"
+                      name="phone"
+                      type="tel"
+                      defaultValue={lead.phone ?? ""}
+                      placeholder="+1 555 000 0000"
+                      className={INPUT_CLS}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="ci-linkedin" className="block text-xs text-slate-500 mb-1">
+                    LinkedIn URL
+                  </label>
+                  <input
+                    id="ci-linkedin"
+                    name="linkedinUrl"
+                    defaultValue={lead.linkedinUrl ?? ""}
+                    placeholder="https://linkedin.com/in/..."
+                    className={INPUT_CLS}
+                  />
+                </div>
+                <div className="flex justify-end">
+                  <SubmitButton
+                    pendingLabel="Saving…"
+                    className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:opacity-50"
+                  >
+                    Save contact info
+                  </SubmitButton>
+                </div>
+              </form>
+            </div>
           </div>
 
           {/* Status update */}
@@ -153,27 +262,56 @@ export default async function LeadDetailPage({
                   </option>
                 ))}
               </select>
-              <button
-                type="submit"
-                className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
+              <SubmitButton
+                pendingLabel="Saving…"
+                className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:opacity-50"
               >
                 Save
-              </button>
+              </SubmitButton>
             </form>
           </div>
+
           {/* Research Brief */}
           <div className="rounded-lg border border-slate-200 bg-white p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-slate-900">Research Brief</h2>
               <form action={researchAction}>
-                <button
-                  type="submit"
-                  className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
-                >
+                <SubmitButton pendingLabel="Researching…" className={ACTION_BTN_CLS}>
                   {research ? "Re-run research" : "Research this lead"}
-                </button>
+                </SubmitButton>
               </form>
             </div>
+
+            {research && score && (
+              <div className="mb-4 rounded-md border border-slate-100 bg-slate-50 px-3 py-2.5">
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${SCORE_LABEL_CLASSES[score.label]}`}>
+                    {score.label}
+                  </span>
+                  <span className="text-sm font-semibold text-slate-700">{score.total}</span>
+                  <span className="text-xs text-slate-400">/100</span>
+                  <span className="text-xs text-slate-500 leading-snug">{score.rationale}</span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5">
+                  {SCORE_FACTORS.map(({ key, label }) => (
+                    <span key={key} className="flex items-center gap-1.5 text-xs text-slate-500">
+                      <span className="w-16 shrink-0">{label}</span>
+                      <span className="flex gap-0.5">
+                        {([1, 2, 3] as const).map((i) => (
+                          <span
+                            key={i}
+                            className={`inline-block h-1.5 w-4 rounded-full ${
+                              score.factors[key] >= i ? "bg-slate-500" : "bg-slate-200"
+                            }`}
+                          />
+                        ))}
+                      </span>
+                      <span className="text-slate-400">{score.factors[key]}/3</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {research ? (
               <dl className="space-y-4 text-sm">
@@ -212,15 +350,68 @@ export default async function LeadDetailPage({
                   </div>
                 )}
                 <p className="text-xs text-slate-400">
-                  Generated {new Date(research.generatedAt).toLocaleDateString("en-US", {
+                  Last updated {new Date(research.generatedAt).toLocaleDateString("en-US", {
                     month: "short", day: "numeric", year: "numeric",
                     hour: "2-digit", minute: "2-digit",
                   })} via {research.provider}
+                  {researchPlaybookName && (
+                    <span className="ml-1">· {researchPlaybookName} playbook</span>
+                  )}
+                  {researchHistory.length > 0 && (
+                    <span className="ml-1">
+                      · {researchHistory.length} run{researchHistory.length !== 1 ? "s" : ""}
+                    </span>
+                  )}
                 </p>
               </dl>
             ) : (
               <p className="text-sm text-slate-400">
                 No research brief yet — click "Research this lead" to generate one.
+              </p>
+            )}
+          </div>
+
+          {/* Draft Email */}
+          <div className="rounded-lg border border-slate-200 bg-white p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-slate-900">Draft Email</h2>
+              <form action={draftAction}>
+                <SubmitButton
+                  pendingLabel="Generating…"
+                  disabled={!research}
+                  className={ACTION_BTN_CLS}
+                >
+                  {draft ? "Re-generate draft" : "Generate draft"}
+                </SubmitButton>
+              </form>
+            </div>
+
+            {draft ? (
+              <div className="space-y-4 text-sm">
+                <div>
+                  <p className="font-medium text-slate-700">Subject</p>
+                  <p className="mt-1 text-slate-900">{draft.subject}</p>
+                </div>
+                <div>
+                  <p className="font-medium text-slate-700">Body</p>
+                  <pre className="mt-1 whitespace-pre-wrap font-sans text-slate-700 leading-relaxed">{draft.body}</pre>
+                </div>
+                <div>
+                  <p className="font-medium text-slate-700">Angle</p>
+                  <p className="mt-1 text-slate-600 italic">{draft.rationale}</p>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Generated {new Date(draft.generatedAt).toLocaleDateString("en-US", {
+                    month: "short", day: "numeric", year: "numeric",
+                    hour: "2-digit", minute: "2-digit",
+                  })} via {draft.provider}
+                </p>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400">
+                {research
+                  ? "No draft yet — click \"Generate draft\" to create one from the research brief."
+                  : "Research this lead first before generating a draft."}
               </p>
             )}
           </div>
@@ -234,15 +425,15 @@ export default async function LeadDetailPage({
                 name="body"
                 rows={3}
                 placeholder="Add an internal note…"
-                className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                className={INPUT_CLS}
               />
               <div className="mt-2 flex justify-end">
-                <button
-                  type="submit"
-                  className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
+                <SubmitButton
+                  pendingLabel="Saving…"
+                  className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:opacity-50"
                 >
                   Save note
-                </button>
+                </SubmitButton>
               </div>
             </form>
 
@@ -296,12 +487,40 @@ export default async function LeadDetailPage({
                   </span>
                 </dd>
               </div>
-              {lead.playbook && (
-                <div>
-                  <dt className="text-slate-500">Playbook</dt>
-                  <dd className="mt-0.5 font-medium text-slate-900">{lead.playbook.name}</dd>
-                </div>
-              )}
+              <div>
+                <dt className="text-slate-500 mb-1">Playbook</dt>
+                <dd>
+                  <form action={updatePlaybookAction} className="flex items-center gap-2">
+                    <select
+                      key={lead.playbookId ?? "none"}
+                      name="playbookId"
+                      defaultValue={lead.playbookId ?? ""}
+                      className="flex-1 min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    >
+                      <option value="">— none —</option>
+                      {playbooks.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                    <SubmitButton
+                      pendingLabel="…"
+                      className="shrink-0 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 disabled:opacity-40"
+                    >
+                      Save
+                    </SubmitButton>
+                  </form>
+                  {playbookConfig && (
+                    <p className="mt-1.5 text-xs text-slate-500 leading-snug">
+                      {playbookConfig.persona}
+                    </p>
+                  )}
+                  {playbookConfig?.scoringNotes && (
+                    <p className="mt-1 text-xs text-slate-400 leading-snug italic">
+                      {playbookConfig.scoringNotes}
+                    </p>
+                  )}
+                </dd>
+              </div>
               {lead.searchProfile && (
                 <div>
                   <dt className="text-slate-500">Source Profile</dt>

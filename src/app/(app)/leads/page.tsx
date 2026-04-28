@@ -3,6 +3,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { formatArchetype, formatStatus } from "@/lib/utils";
 import type { LeadStatus } from "@prisma/client";
+import type { PriorityLabel } from "@/lib/scoring";
 
 export const metadata: Metadata = { title: "Leads" };
 
@@ -20,19 +21,34 @@ const TABLE_HEADERS = [
   "Person / Company",
   "Archetype",
   "Status",
+  "Priority",
   "Playbook",
   "Source Profile",
   "Updated",
 ] as const;
 
+const PRIORITY_CLASSES: Record<PriorityLabel, string> = {
+  "High Priority": "bg-green-100 text-green-800",
+  "Review":        "bg-amber-50 text-amber-700",
+  "Monitor":       "bg-slate-100 text-slate-600",
+  "Low Fit":       "bg-slate-50 text-slate-400",
+};
+
 export default async function LeadsPage() {
-  const leads = await prisma.lead.findMany({
+  const rawLeads = await prisma.lead.findMany({
     include: {
       assignedTo:    { select: { name: true, email: true } },
       playbook:      { select: { name: true } },
       searchProfile: { select: { id: true, name: true } },
     },
     orderBy: { updatedAt: "desc" },
+  });
+
+  // Sort: scored leads by score desc, unscored leads at the bottom (score -1)
+  const leads = [...rawLeads].sort((a, b) => {
+    const sa = ((a.metadata as Record<string, unknown>)?.score as { total?: number } | undefined)?.total ?? -1;
+    const sb = ((b.metadata as Record<string, unknown>)?.score as { total?: number } | undefined)?.total ?? -1;
+    return sb - sa;
   });
 
   return (
@@ -71,7 +87,11 @@ export default async function LeadsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {leads.map((lead) => (
+              {leads.map((lead) => {
+                const scoreMeta = ((lead.metadata as Record<string, unknown>)?.score as {
+                  label?: string; total?: number;
+                } | undefined);
+                return (
                 <tr key={lead.id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-4 py-3">
                     <Link href={`/leads/${lead.id}`} className="text-sm font-medium text-slate-900 hover:text-brand-600">
@@ -92,6 +112,15 @@ export default async function LeadsPage() {
                     >
                       {formatStatus(lead.status)}
                     </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {scoreMeta?.label ? (
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${PRIORITY_CLASSES[scoreMeta.label as PriorityLabel] ?? "bg-slate-100 text-slate-500"}`}>
+                        {scoreMeta.label}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-300">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-500">
                     {lead.playbook?.name ?? "—"}
@@ -115,7 +144,8 @@ export default async function LeadsPage() {
                     })}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

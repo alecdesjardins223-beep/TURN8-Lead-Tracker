@@ -14,6 +14,12 @@ export interface ResearchLeadInput {
   location?:    string | null;
   linkedinUrl?: string | null;
   archetype:    string;
+  playbook?: {
+    name:             string;
+    persona:          string;
+    signalFocus:      string;
+    researchGuidance: string;
+  } | null;
 }
 
 export interface ResearchProvider {

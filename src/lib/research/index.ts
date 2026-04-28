@@ -9,3 +9,5 @@ export function getResearchProvider(): ResearchProvider {
 }
 
 export type { ResearchProvider, ResearchBrief, ResearchLeadInput } from "./types";
+export { mergeResearch, prependToHistory } from "./merge";
+export type { StoredBrief } from "./merge";
