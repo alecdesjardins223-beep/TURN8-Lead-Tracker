@@ -10,8 +10,28 @@ import type { StoredBrief } from "@/lib/research";
 import { getDraftProvider } from "@/lib/draft";
 import { getPlaybookConfig } from "@/lib/playbooks";
 import { scoreResearch } from "@/lib/scoring";
+import { getEnrichmentProvider } from "@/lib/enrichment";
+import type { ContactFieldRecord, ContactConfidence } from "@/lib/enrichment";
 
 const VALID_STATUSES = new Set(Object.values(LeadStatus));
+
+// ─── Contact enrichment helpers ───────────────────────────────────────────────
+
+function confidenceRank(c: ContactConfidence): number {
+  return { verified: 3, likely: 2, inferred: 1, manual: 2 }[c] ?? 0;
+}
+
+// Merge rule: manual always wins; otherwise higher-confidence incoming wins;
+// equal confidence prefers incoming (more recent).
+function mergeContactField(
+  existing: ContactFieldRecord | null | undefined,
+  incoming: ContactFieldRecord,
+): ContactFieldRecord {
+  if (!existing?.value) return incoming;
+  if (existing.source === "manual") return existing;
+  if (confidenceRank(incoming.confidence) >= confidenceRank(existing.confidence)) return incoming;
+  return existing;
+}
 
 export async function researchLead(leadId: string, _formData: FormData): Promise<void> {
   const session = await getServerSession(authOptions);
@@ -171,20 +191,142 @@ export async function updateLeadPlaybook(leadId: string, formData: FormData): Pr
   revalidatePath(`/leads/${leadId}`);
 }
 
-export async function updateContactInfo(leadId: string, formData: FormData): Promise<void> {
+export async function enrichLead(leadId: string, _formData: FormData): Promise<void> {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) return;
 
-  const email       = formData.get("email");
-  const phone       = formData.get("phone");
-  const linkedinUrl = formData.get("linkedinUrl");
+  const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+  if (!lead) return;
+
+  const provider = getEnrichmentProvider();
+
+  let result;
+  try {
+    result = await provider.enrich({
+      firstName:   lead.firstName,
+      lastName:    lead.lastName,
+      title:       lead.title,
+      company:     lead.company,
+      location:    lead.location,
+      linkedinUrl: lead.linkedinUrl,
+      email:       lead.email,
+    });
+  } catch (err) {
+    console.error("[enrichLead] provider error:", err);
+    return;
+  }
+
+  // Re-read fresh to get the latest canonical values and metadata.
+  const fresh = await prisma.lead.findUnique({
+    where:  { id: leadId },
+    select: { metadata: true, email: true, linkedinUrl: true },
+  });
+  if (!fresh) return;
+
+  const latestMeta  = (fresh.metadata as Record<string, unknown>) ?? {};
+  const existingEnr = (latestMeta.enrichedContacts as Record<string, unknown> | null) ?? {};
+  const now         = new Date().toISOString();
+
+  // Wrap each provider result field and merge with existing records.
+  const merged: Record<string, unknown> = {
+    ...existingEnr,
+    enrichedAt: now,
+    provider:   provider.name,
+  };
+
+  const fields = [
+    { key: "workEmail",      incoming: result.workEmail },
+    { key: "phone",          incoming: result.phone },
+    { key: "linkedinUrl",    incoming: result.linkedinUrl },
+    { key: "companyWebsite", incoming: result.companyWebsite },
+  ] as const;
+
+  for (const { key, incoming } of fields) {
+    if (!incoming) continue;
+    const incomingRecord: ContactFieldRecord = {
+      value:       incoming.value,
+      source:      "enrichment",
+      confidence:  incoming.confidence,
+      lastUpdated: now,
+    };
+    const existing = (existingEnr[key] as ContactFieldRecord | null | undefined) ?? null;
+    merged[key] = mergeContactField(existing, incomingRecord);
+  }
+
+  // Backfill empty canonical columns — safe only, never overwrite existing values.
+  const canonicalUpdates: { email?: string; linkedinUrl?: string } = {};
+  const mergedEmail     = merged.workEmail   as ContactFieldRecord | null | undefined;
+  const mergedLinkedin  = merged.linkedinUrl as ContactFieldRecord | null | undefined;
+  if (!fresh.email       && mergedEmail?.source    === "enrichment" && mergedEmail.value)    canonicalUpdates.email       = mergedEmail.value;
+  if (!fresh.linkedinUrl && mergedLinkedin?.source === "enrichment" && mergedLinkedin.value) canonicalUpdates.linkedinUrl = mergedLinkedin.value;
 
   await prisma.lead.update({
     where: { id: leadId },
     data: {
-      email:       typeof email       === "string" ? email.trim()       || null : undefined,
-      phone:       typeof phone       === "string" ? phone.trim()       || null : undefined,
-      linkedinUrl: typeof linkedinUrl === "string" ? linkedinUrl.trim() || null : undefined,
+      ...canonicalUpdates,
+      metadata: {
+        ...latestMeta,
+        enrichedContacts: JSON.parse(JSON.stringify(merged)),
+      },
+    },
+  });
+
+  revalidatePath(`/leads/${leadId}`);
+}
+
+export async function updateContactInfo(leadId: string, formData: FormData): Promise<void> {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) return;
+
+  const rawEmail       = formData.get("email");
+  const rawPhone       = formData.get("phone");
+  const rawLinkedinUrl = formData.get("linkedinUrl");
+
+  const email       = typeof rawEmail       === "string" ? rawEmail.trim()       || null : undefined;
+  const phone       = typeof rawPhone       === "string" ? rawPhone.trim()       || null : undefined;
+  const linkedinUrl = typeof rawLinkedinUrl === "string" ? rawLinkedinUrl.trim() || null : undefined;
+
+  // Read current metadata AND canonical values.
+  // We compare each incoming value against the current DB value so that form fields
+  // the user didn't touch (pre-filled with the existing value) never trigger a
+  // metadata update for fields they didn't edit.
+  const fresh = await prisma.lead.findUnique({
+    where:  { id: leadId },
+    select: { metadata: true, email: true, phone: true, linkedinUrl: true },
+  });
+  const latestMeta  = (fresh?.metadata as Record<string, unknown>) ?? {};
+  const existingEnr = (latestMeta.enrichedContacts as Record<string, unknown> | null) ?? {};
+  const now         = new Date().toISOString();
+
+  const updatedEnr: Record<string, unknown> = { ...existingEnr };
+
+  // Only update metadata for a field when its value actually changed.
+  if (email !== undefined && email !== (fresh?.email ?? null)) {
+    updatedEnr.workEmail = email
+      ? { value: email, source: "manual", confidence: "manual", lastUpdated: now }
+      : null;
+  }
+  if (phone !== undefined && phone !== (fresh?.phone ?? null)) {
+    updatedEnr.phone = phone
+      ? { value: phone, source: "manual", confidence: "manual", lastUpdated: now }
+      : null;
+  }
+  if (linkedinUrl !== undefined && linkedinUrl !== (fresh?.linkedinUrl ?? null)) {
+    updatedEnr.linkedinUrl = linkedinUrl
+      ? { value: linkedinUrl, source: "manual", confidence: "manual", lastUpdated: now }
+      : null;
+  }
+
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      email,
+      phone,
+      linkedinUrl,
+      metadata: {
+        ...latestMeta,
+        enrichedContacts: JSON.parse(JSON.stringify(updatedEnr)),
+      },
     },
   });
 

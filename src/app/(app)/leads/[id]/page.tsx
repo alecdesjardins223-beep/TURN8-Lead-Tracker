@@ -12,10 +12,12 @@ import {
   generateDraft,
   updateContactInfo,
   updateLeadPlaybook,
+  enrichLead,
 } from "./actions";
 import type { StoredBrief } from "@/lib/research";
 import type { EmailDraft } from "@/lib/draft";
 import type { LeadScore, PriorityLabel } from "@/lib/scoring";
+import type { EnrichedContacts, ContactConfidence } from "@/lib/enrichment";
 import { getPlaybookConfig } from "@/lib/playbooks";
 import { SubmitButton } from "./SubmitButton";
 
@@ -44,6 +46,13 @@ const SCORE_LABEL_CLASSES: Record<PriorityLabel, string> = {
   "Review":        "bg-amber-50 text-amber-700",
   "Monitor":       "bg-slate-100 text-slate-600",
   "Low Fit":       "bg-slate-50 text-slate-400",
+};
+
+const CONTACT_CONF_CLS: Record<ContactConfidence, string> = {
+  manual:   "bg-slate-100 text-slate-600",
+  verified: "bg-green-50 text-green-700",
+  likely:   "bg-amber-50 text-amber-700",
+  inferred: "bg-slate-100 text-slate-500",
 };
 
 const SCORE_FACTORS: Array<{ key: keyof LeadScore["factors"]; label: string }> = [
@@ -89,6 +98,7 @@ export default async function LeadDetailPage({
   const draftAction          = generateDraft.bind(null, lead.id);
   const updateContactAction  = updateContactInfo.bind(null, lead.id);
   const updatePlaybookAction = updateLeadPlaybook.bind(null, lead.id);
+  const enrichAction         = enrichLead.bind(null, lead.id);
 
   const playbookConfig  = lead.playbook?.id ? getPlaybookConfig(lead.playbook.id) : null;
   const meta            = lead.metadata as Record<string, unknown>;
@@ -96,6 +106,7 @@ export default async function LeadDetailPage({
   const researchHistory = ((meta?.researchHistory ?? []) as StoredBrief[]);
   const draft           = (meta?.draft           ?? null) as (EmailDraft & { generatedAt: string; provider: string }) | null;
   const score           = (meta?.score           ?? null) as LeadScore | null;
+  const enrichedContacts = (meta?.enrichedContacts ?? null) as EnrichedContacts | null;
 
   const researchPlaybookName = research?.playbookId
     ? (playbooks.find((p) => p.id === research.playbookId)?.name ?? null)
@@ -142,34 +153,85 @@ export default async function LeadDetailPage({
 
           {/* Contact Info */}
           <div className="rounded-lg border border-slate-200 bg-white p-6">
-            <h2 className="text-sm font-semibold text-slate-900 mb-4">Contact Info</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-slate-900">Contact Info</h2>
+              <form action={enrichAction}>
+                <SubmitButton pendingLabel="Enriching…" className={ACTION_BTN_CLS}>
+                  {enrichedContacts ? "Re-run enrichment" : "Run enrichment"}
+                </SubmitButton>
+              </form>
+            </div>
 
-            {/* Read-only display */}
-            <dl className="space-y-3 text-sm mb-6">
-              {lead.email && (
+            {/* Read-only display with confidence badges */}
+            <dl className="space-y-3 text-sm mb-4">
+              {(lead.email || enrichedContacts?.workEmail) && (
                 <div className="flex gap-4">
                   <dt className="w-28 shrink-0 text-slate-500">Email</dt>
-                  <dd className="text-slate-900 break-all">{lead.email}</dd>
+                  <dd className="flex flex-wrap items-baseline gap-1.5 break-all">
+                    <span className="text-slate-900">
+                      {lead.email ?? enrichedContacts?.workEmail?.value}
+                    </span>
+                    {enrichedContacts?.workEmail && (
+                      <span className={`rounded-full px-1.5 py-0.5 text-xs ${CONTACT_CONF_CLS[enrichedContacts.workEmail.confidence]}`}>
+                        {enrichedContacts.workEmail.confidence}
+                        {enrichedContacts.workEmail.confidence !== "manual" && ` · ${enrichedContacts.workEmail.source}`}
+                      </span>
+                    )}
+                  </dd>
                 </div>
               )}
-              {lead.phone && (
+              {(lead.phone || enrichedContacts?.phone) && (
                 <div className="flex gap-4">
                   <dt className="w-28 shrink-0 text-slate-500">Phone</dt>
-                  <dd className="text-slate-900">{lead.phone}</dd>
+                  <dd className="flex flex-wrap items-baseline gap-1.5">
+                    <span className="text-slate-900">
+                      {lead.phone ?? enrichedContacts?.phone?.value}
+                    </span>
+                    {enrichedContacts?.phone && (
+                      <span className={`rounded-full px-1.5 py-0.5 text-xs ${CONTACT_CONF_CLS[enrichedContacts.phone.confidence]}`}>
+                        {enrichedContacts.phone.confidence}
+                        {enrichedContacts.phone.confidence !== "manual" && ` · ${enrichedContacts.phone.source}`}
+                      </span>
+                    )}
+                  </dd>
                 </div>
               )}
-              {lead.linkedinUrl && (
+              {(lead.linkedinUrl || enrichedContacts?.linkedinUrl) && (
                 <div className="flex gap-4">
                   <dt className="w-28 shrink-0 text-slate-500">LinkedIn</dt>
                   <dd>
                     <a
-                      href={lead.linkedinUrl}
+                      href={lead.linkedinUrl ?? enrichedContacts?.linkedinUrl?.value ?? "#"}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-brand-600 hover:text-brand-700 truncate block max-w-sm"
                     >
-                      {lead.linkedinUrl}
+                      {lead.linkedinUrl ?? enrichedContacts?.linkedinUrl?.value}
                     </a>
+                    {enrichedContacts?.linkedinUrl && (
+                      <span className={`mt-0.5 inline-block rounded-full px-1.5 py-0.5 text-xs ${CONTACT_CONF_CLS[enrichedContacts.linkedinUrl.confidence]}`}>
+                        {enrichedContacts.linkedinUrl.confidence}
+                        {enrichedContacts.linkedinUrl.confidence !== "manual" && ` · ${enrichedContacts.linkedinUrl.source}`}
+                      </span>
+                    )}
+                  </dd>
+                </div>
+              )}
+              {enrichedContacts?.companyWebsite && (
+                <div className="flex gap-4">
+                  <dt className="w-28 shrink-0 text-slate-500">Website</dt>
+                  <dd className="flex flex-wrap items-baseline gap-1.5">
+                    <a
+                      href={enrichedContacts.companyWebsite.value}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-brand-600 hover:text-brand-700 truncate max-w-sm"
+                    >
+                      {enrichedContacts.companyWebsite.value}
+                    </a>
+                    <span className={`rounded-full px-1.5 py-0.5 text-xs ${CONTACT_CONF_CLS[enrichedContacts.companyWebsite.confidence]}`}>
+                      {enrichedContacts.companyWebsite.confidence} · {enrichedContacts.companyWebsite.source}
+                    </span>
                   </dd>
                 </div>
               )}
@@ -185,10 +247,18 @@ export default async function LeadDetailPage({
                   <dd className="text-slate-700 whitespace-pre-wrap">{lead.notes}</dd>
                 </div>
               )}
-              {!lead.email && !lead.phone && !lead.linkedinUrl && !lead.location && !lead.notes && (
-                <p className="text-slate-400">No contact details — add them below.</p>
+              {!lead.email && !lead.phone && !lead.linkedinUrl && !lead.location && !lead.notes && !enrichedContacts && (
+                <p className="text-slate-400">No contact details — add them below or run enrichment.</p>
               )}
             </dl>
+
+            {enrichedContacts && (
+              <p className="mb-4 text-xs text-slate-400">
+                Enriched {new Date(enrichedContacts.enrichedAt).toLocaleDateString("en-US", {
+                  month: "short", day: "numeric", year: "numeric",
+                })} via {enrichedContacts.provider}
+              </p>
+            )}
 
             {/* Inline edit form for contact fields */}
             <div className="border-t border-slate-100 pt-4">
