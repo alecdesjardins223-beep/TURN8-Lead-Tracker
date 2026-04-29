@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { LeadStatus } from "@prisma/client";
+import { LeadStatus, ActivityType } from "@prisma/client";
 import { formatArchetype, formatStatus } from "@/lib/utils";
 import {
   updateLeadStatus,
@@ -67,6 +67,47 @@ const SCORE_FACTORS: Array<{ key: keyof LeadScore["factors"]; label: string }> =
   { key: "evidenceQuality",  label: "Evidence"   },
 ];
 
+const ACTIVITY_TYPE_LABEL: Record<ActivityType, string> = {
+  NOTE:              "Note",
+  EMAIL_SENT:        "Email sent",
+  EMAIL_OPENED:      "Email opened",
+  EMAIL_REPLIED:     "Email replied",
+  CALL:              "Call",
+  STATUS_CHANGE:     "Status changed",
+  ASSIGNMENT_CHANGE: "Reassigned",
+};
+
+type ActivityRow = {
+  id: string;
+  type: ActivityType;
+  body: string | null;
+  metadata: unknown;
+  createdAt: Date;
+};
+
+function summarizeActivity(a: ActivityRow): string {
+  switch (a.type) {
+    case "EMAIL_SENT": {
+      const m = (a.metadata ?? {}) as { to?: string; subject?: string };
+      const parts: string[] = [];
+      if (m.to)      parts.push(m.to);
+      if (m.subject) parts.push(`"${m.subject}"`);
+      return parts.length ? parts.join(" — ") : (a.body ?? "");
+    }
+    case "STATUS_CHANGE":
+    case "ASSIGNMENT_CHANGE":
+    case "EMAIL_REPLIED":
+    case "CALL":
+      return a.body ?? "";
+    case "EMAIL_OPENED":
+      return a.body ?? "";
+    case "NOTE":
+      return a.body ? (a.body.length > 100 ? a.body.slice(0, 100) + "…" : a.body) : "";
+    default:
+      return a.body ?? "";
+  }
+}
+
 export default async function LeadDetailPage({
   params,
 }: {
@@ -82,9 +123,8 @@ export default async function LeadDetailPage({
         playbook:      { select: { id: true, name: true } },
         searchProfile: { select: { id: true, name: true } },
         activities: {
-          where:   { type: "NOTE" },
           orderBy: { createdAt: "desc" },
-          select:  { id: true, body: true, createdAt: true },
+          select:  { id: true, type: true, body: true, metadata: true, createdAt: true },
         },
       },
     }),
@@ -96,6 +136,9 @@ export default async function LeadDetailPage({
   ]);
 
   if (!lead) notFound();
+
+  const notes    = lead.activities.filter((a) => a.type === "NOTE");
+  const timeline = lead.activities.filter((a) => a.type !== "NOTE");
 
   const action                 = updateLeadStatus.bind(null, lead.id);
   const noteAction             = createNote.bind(null, lead.id);
@@ -487,11 +530,11 @@ export default async function LeadDetailPage({
               </div>
             </form>
 
-            {lead.activities.length === 0 ? (
+            {notes.length === 0 ? (
               <p className="text-sm text-slate-400">No notes yet.</p>
             ) : (
               <ul className="space-y-4">
-                {lead.activities.map((note) => (
+                {notes.map((note) => (
                   <li key={note.id} className="border-t border-slate-100 pt-4 first:border-t-0 first:pt-0">
                     <p className="text-sm text-slate-700 whitespace-pre-wrap">{note.body}</p>
                     <div className="mt-1 flex items-center justify-between gap-4">
@@ -515,6 +558,46 @@ export default async function LeadDetailPage({
                     </div>
                   </li>
                 ))}
+              </ul>
+            )}
+          </div>
+
+          {/* Activity Timeline */}
+          <div className="rounded-lg border border-slate-200 bg-white p-6">
+            <h2 className="text-sm font-semibold text-slate-900 mb-4">Activity</h2>
+
+            {timeline.length === 0 ? (
+              <p className="text-sm text-slate-400">No outreach activity yet.</p>
+            ) : (
+              <ul className="space-y-0">
+                {timeline.map((item, idx) => {
+                  const summary = summarizeActivity(item);
+                  return (
+                    <li
+                      key={item.id}
+                      className={`flex gap-3 py-3 ${idx !== 0 ? "border-t border-slate-100" : ""}`}
+                    >
+                      <div className="mt-2 w-1.5 h-1.5 shrink-0 rounded-full bg-slate-300" />
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-slate-700">
+                          {ACTIVITY_TYPE_LABEL[item.type] ?? item.type}
+                        </p>
+                        {summary && (
+                          <p className="mt-0.5 text-xs text-slate-500 break-words">{summary}</p>
+                        )}
+                        <p className="mt-0.5 text-xs text-slate-400">
+                          {item.createdAt.toLocaleDateString("en-US", {
+                            month:  "short",
+                            day:    "numeric",
+                            year:   "numeric",
+                            hour:   "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </p>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
