@@ -10,16 +10,21 @@ import {
   deleteNote,
   researchLead,
   generateDraft,
+  saveDraftEdits,
+  verifyDraft,
+  sendDraft,
   updateContactInfo,
   updateLeadPlaybook,
   enrichLead,
 } from "./actions";
 import type { StoredBrief } from "@/lib/research";
-import type { EmailDraft } from "@/lib/draft";
+import type { StoredDraft } from "@/lib/draft";
 import type { LeadScore, PriorityLabel } from "@/lib/scoring";
 import type { EnrichedContacts, ContactConfidence } from "@/lib/enrichment";
+import { resolveUsableEmail } from "@/lib/enrichment";
 import { getPlaybookConfig } from "@/lib/playbooks";
 import { SubmitButton } from "./SubmitButton";
+import { DraftSection } from "./DraftSection";
 
 export const metadata: Metadata = { title: "Lead" };
 
@@ -92,21 +97,30 @@ export default async function LeadDetailPage({
 
   if (!lead) notFound();
 
-  const action               = updateLeadStatus.bind(null, lead.id);
-  const noteAction           = createNote.bind(null, lead.id);
-  const researchAction       = researchLead.bind(null, lead.id);
-  const draftAction          = generateDraft.bind(null, lead.id);
-  const updateContactAction  = updateContactInfo.bind(null, lead.id);
-  const updatePlaybookAction = updateLeadPlaybook.bind(null, lead.id);
-  const enrichAction         = enrichLead.bind(null, lead.id);
+  const action                 = updateLeadStatus.bind(null, lead.id);
+  const noteAction             = createNote.bind(null, lead.id);
+  const researchAction         = researchLead.bind(null, lead.id);
+  const draftAction            = generateDraft.bind(null, lead.id);
+  const saveDraftEditsAction   = saveDraftEdits.bind(null, lead.id);
+  const verifyDraftAction      = verifyDraft.bind(null, lead.id);
+  const sendDraftAction        = sendDraft.bind(null, lead.id);
+  const updateContactAction    = updateContactInfo.bind(null, lead.id);
+  const updatePlaybookAction   = updateLeadPlaybook.bind(null, lead.id);
+  const enrichAction           = enrichLead.bind(null, lead.id);
 
   const playbookConfig  = lead.playbook?.id ? getPlaybookConfig(lead.playbook.id) : null;
-  const meta            = lead.metadata as Record<string, unknown>;
-  const research        = (meta?.research        ?? null) as StoredBrief | null;
-  const researchHistory = ((meta?.researchHistory ?? []) as StoredBrief[]);
-  const draft           = (meta?.draft           ?? null) as (EmailDraft & { generatedAt: string; provider: string }) | null;
-  const score           = (meta?.score           ?? null) as LeadScore | null;
+  const meta             = lead.metadata as Record<string, unknown>;
+  const research         = (meta?.research        ?? null) as StoredBrief | null;
+  const researchHistory  = ((meta?.researchHistory ?? []) as StoredBrief[]);
+  const rawDraft         = (meta?.draft           ?? null) as StoredDraft | null;
+  // Backfill status for drafts created before this field was added
+  const draft: StoredDraft | null = rawDraft
+    ? { ...rawDraft, status: rawDraft.status ?? "generated" }
+    : null;
+  const score            = (meta?.score           ?? null) as LeadScore | null;
   const enrichedContacts = (meta?.enrichedContacts ?? null) as EnrichedContacts | null;
+
+  const usableEmail = resolveUsableEmail(lead.email, enrichedContacts?.workEmail);
 
   const researchPlaybookName = research?.playbookId
     ? (playbooks.find((p) => p.id === research.playbookId)?.name ?? null)
@@ -442,49 +456,15 @@ export default async function LeadDetailPage({
           </div>
 
           {/* Draft Email */}
-          <div className="rounded-lg border border-slate-200 bg-white p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-slate-900">Draft Email</h2>
-              <form action={draftAction}>
-                <SubmitButton
-                  pendingLabel="Generating…"
-                  disabled={!research}
-                  className={ACTION_BTN_CLS}
-                >
-                  {draft ? "Re-generate draft" : "Generate draft"}
-                </SubmitButton>
-              </form>
-            </div>
-
-            {draft ? (
-              <div className="space-y-4 text-sm">
-                <div>
-                  <p className="font-medium text-slate-700">Subject</p>
-                  <p className="mt-1 text-slate-900">{draft.subject}</p>
-                </div>
-                <div>
-                  <p className="font-medium text-slate-700">Body</p>
-                  <pre className="mt-1 whitespace-pre-wrap font-sans text-slate-700 leading-relaxed">{draft.body}</pre>
-                </div>
-                <div>
-                  <p className="font-medium text-slate-700">Angle</p>
-                  <p className="mt-1 text-slate-600 italic">{draft.rationale}</p>
-                </div>
-                <p className="text-xs text-slate-400">
-                  Generated {new Date(draft.generatedAt).toLocaleDateString("en-US", {
-                    month: "short", day: "numeric", year: "numeric",
-                    hour: "2-digit", minute: "2-digit",
-                  })} via {draft.provider}
-                </p>
-              </div>
-            ) : (
-              <p className="text-sm text-slate-400">
-                {research
-                  ? "No draft yet — click \"Generate draft\" to create one from the research brief."
-                  : "Research this lead first before generating a draft."}
-              </p>
-            )}
-          </div>
+          <DraftSection
+            draft={draft}
+            usableEmail={usableEmail}
+            researchExists={!!research}
+            generateDraftAction={draftAction}
+            saveDraftEditsAction={saveDraftEditsAction}
+            verifyDraftAction={verifyDraftAction}
+            sendDraftAction={sendDraftAction}
+          />
 
           {/* Notes */}
           <div className="rounded-lg border border-slate-200 bg-white p-6">

@@ -10,8 +10,11 @@ import type { StoredBrief } from "@/lib/research";
 import { getDraftProvider } from "@/lib/draft";
 import { getPlaybookConfig } from "@/lib/playbooks";
 import { scoreResearch } from "@/lib/scoring";
-import { getEnrichmentProvider } from "@/lib/enrichment";
+import { getEnrichmentProvider, resolveUsableEmail } from "@/lib/enrichment";
 import type { ContactFieldRecord, ContactConfidence } from "@/lib/enrichment";
+import { sendEmail } from "@/lib/email";
+
+export type SendDraftState = { ok: boolean; error?: string } | null;
 
 const VALID_STATUSES = new Set(Object.values(LeadStatus));
 
@@ -167,6 +170,7 @@ export async function generateDraft(leadId: string, _formData: FormData): Promis
         draft: {
           generatedAt: new Date().toISOString(),
           provider:    provider.name,
+          status:      "generated",
           ...draft,
         },
       },
@@ -174,6 +178,161 @@ export async function generateDraft(leadId: string, _formData: FormData): Promis
   });
 
   revalidatePath(`/leads/${leadId}`);
+}
+
+export async function saveDraftEdits(leadId: string, formData: FormData): Promise<void> {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) return;
+
+  const rawSubject = formData.get("subject");
+  const rawBody    = formData.get("body");
+  if (typeof rawSubject !== "string" || typeof rawBody !== "string") return;
+
+  const subject = rawSubject.trim();
+  const body    = rawBody.trim();
+  if (!subject || !body) return;
+
+  const fresh = await prisma.lead.findUnique({
+    where:  { id: leadId },
+    select: { metadata: true },
+  });
+  if (!fresh) return;
+
+  const latestMeta    = (fresh.metadata as Record<string, unknown>) ?? {};
+  const currentDraft  = (latestMeta.draft as Record<string, unknown> | null);
+  if (!currentDraft) return;
+
+  const currentStatus = (currentDraft.status as string | undefined) ?? "generated";
+  // Editing a verified draft resets it to generated
+  const newStatus     = currentStatus === "verified" ? "generated" : currentStatus;
+
+  const updatedDraft: Record<string, unknown> = {
+    ...currentDraft,
+    subject,
+    body,
+    status:   newStatus,
+    editedAt: new Date().toISOString(),
+  };
+  if (newStatus !== "verified") delete updatedDraft.verifiedAt;
+
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      metadata: {
+        ...latestMeta,
+        draft: JSON.parse(JSON.stringify(updatedDraft)),
+      },
+    },
+  });
+
+  revalidatePath(`/leads/${leadId}`);
+}
+
+export async function verifyDraft(leadId: string, _formData: FormData): Promise<void> {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) return;
+
+  const fresh = await prisma.lead.findUnique({
+    where:  { id: leadId },
+    select: { metadata: true },
+  });
+  if (!fresh) return;
+
+  const latestMeta   = (fresh.metadata as Record<string, unknown>) ?? {};
+  const currentDraft = (latestMeta.draft as Record<string, unknown> | null);
+  if (!currentDraft) return;
+
+  const currentStatus = (currentDraft.status as string | undefined) ?? "generated";
+  if (currentStatus === "sent") return;
+
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      metadata: {
+        ...latestMeta,
+        draft: {
+          ...currentDraft,
+          status:     "verified",
+          verifiedAt: new Date().toISOString(),
+        },
+      },
+    },
+  });
+
+  revalidatePath(`/leads/${leadId}`);
+}
+
+// Returns state so DraftSection can surface send errors via useActionState.
+export async function sendDraft(
+  leadId: string,
+  _prev: SendDraftState,
+  _formData: FormData,
+): Promise<SendDraftState> {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) return { ok: false, error: "Not authenticated" };
+
+  const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+  if (!lead) return { ok: false, error: "Lead not found" };
+
+  const meta         = (lead.metadata as Record<string, unknown>) ?? {};
+  const currentDraft = (meta.draft as Record<string, unknown> | null);
+  if (!currentDraft) return { ok: false, error: "No draft" };
+
+  const draftStatus = (currentDraft.status as string | undefined) ?? "generated";
+  if (draftStatus !== "verified") return { ok: false, error: "Draft must be verified before sending" };
+
+  const enrichedContacts = (meta.enrichedContacts as Record<string, unknown> | null);
+  const enrichedEmail    = enrichedContacts?.workEmail as { value: string; confidence: string } | null | undefined;
+  const usableEmail      = resolveUsableEmail(lead.email, enrichedEmail);
+
+  if (!usableEmail) return { ok: false, error: "No usable email address for this lead" };
+
+  const result = await sendEmail({
+    to:      usableEmail,
+    subject: currentDraft.subject as string,
+    text:    currentDraft.body    as string,
+  });
+
+  if (!result.ok) return { ok: false, error: result.error ?? "Send failed" };
+
+  // Re-read to avoid clobbering concurrent writes
+  const freshAfter = await prisma.lead.findUnique({
+    where:  { id: leadId },
+    select: { metadata: true },
+  });
+  const latestMeta  = (freshAfter?.metadata as Record<string, unknown>) ?? {};
+  const latestDraft = (latestMeta.draft as Record<string, unknown> | null) ?? currentDraft;
+
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      metadata: {
+        ...latestMeta,
+        draft: {
+          ...latestDraft,
+          status: "sent",
+          sentAt: new Date().toISOString(),
+        },
+      },
+    },
+  });
+
+  await prisma.leadActivity.create({
+    data: {
+      leadId,
+      type:     "EMAIL_SENT",
+      body:     `Subject: ${currentDraft.subject as string}`,
+      metadata: JSON.parse(JSON.stringify({
+        to:        usableEmail,
+        subject:   currentDraft.subject,
+        sentVia:   "resend",
+        messageId: result.id ?? null,
+      })),
+    },
+  });
+
+  revalidatePath(`/leads/${leadId}`);
+  return { ok: true };
 }
 
 export async function updateLeadPlaybook(leadId: string, formData: FormData): Promise<void> {

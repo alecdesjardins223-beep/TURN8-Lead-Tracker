@@ -4,6 +4,17 @@ export interface EmailDraft {
   rationale: string;
 }
 
+export type DraftStatus = "generated" | "verified" | "sent";
+
+export interface StoredDraft extends EmailDraft {
+  generatedAt: string;
+  provider:    string;
+  status:      DraftStatus;
+  editedAt?:   string;
+  verifiedAt?: string;
+  sentAt?:     string;
+}
+
 export interface DraftInput {
   firstName:     string;
   lastName:      string;

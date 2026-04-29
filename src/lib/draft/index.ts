@@ -8,4 +8,4 @@ export function getDraftProvider(): DraftProvider {
   return new MockDraftProvider();
 }
 
-export type { DraftProvider, EmailDraft, DraftInput } from "./types";
+export type { DraftProvider, EmailDraft, DraftInput, DraftStatus, StoredDraft } from "./types";
